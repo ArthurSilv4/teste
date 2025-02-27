@@ -1,53 +1,65 @@
 #include <iostream>
+#include <fcntl.h>
 #include <unistd.h>
-#include <linux/can.h>
-#include <sys/socket.h>
-#include <net/if.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <string.h>
-#include <sys/ioctl.h> 
+#include <sys/ioctl.h>
+#include <linux/ppdev.h>
+#include <cstring>
+
+// Desabilitamos a lógica CAN e utilizamos a porta paralela
+// Variável global para o descritor da porta paralela
+int parport_fd;
+
+// Define o estado de saída digital
+/*
+@func:      setDigitalOutput | Define estado de saída utilizando a porta paralela
+@param:     int moduleAddress | Endereço do módulo (não utilizado, apenas para compatibilidade)
+@param:     int value | Valor da saída (cada bit pode representar um canal)
+@area:      Comunicação em porta paralela
+*/
+void setDigitalOutput(int moduleAddress, int value) {
+    (void)moduleAddress; // Suprime warning de variável não utilizada
+    if (ioctl(parport_fd, PPWDATA, &value) < 0) {
+        std::cerr << "Erro ao enviar dados para /dev/parport0 em setDigitalOutput" << std::endl;
+    } else {
+        std::cout << "Módulo " << moduleAddress << " saída definida para " << value << std::endl;
+    }
+}
+
+int getDigitalInput() {
+    unsigned char value;
+    if (ioctl(parport_fd, PPRDATA, &value) < 0) {
+        std::cerr << "Erro ao ler /dev/parport0" << std::endl;
+        return -1;
+    }
+    return value;
+}
 
 int main() {
-    int socket_desc = socket(PF_CAN, SOCK_RAW, CAN_RAW);
-    if (socket_desc < 0) {
-        std::cerr << "Erro ao abrir o socket CAN" << std::endl;
+    // Abre a porta paralela
+    parport_fd = open("/dev/parport0", O_RDWR);
+    if (parport_fd < 0) {
+        std::cerr << "Erro ao abrir /dev/parport0" << std::endl;
         return -1;
     }
 
-    struct sockaddr_can addr;
-    struct ifreq ifr;
-
-    strcpy(ifr.ifr_name, "can0");
-    ioctl(socket_desc, SIOCGIFINDEX, &ifr);
-
-    addr.can_family = AF_CAN;
-    addr.can_ifindex = ifr.ifr_ifindex;
-
-    if (bind(socket_desc, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        std::cerr << "Erro ao associar o socket à interface CAN" << std::endl;
+    // Reivindica o dispositivo
+    if (ioctl(parport_fd, PPCLAIM) < 0) {
+        std::cerr << "Erro ao reivindicar /dev/parport0" << std::endl;
+        close(parport_fd);
         return -1;
     }
 
-    struct can_frame frame;
-    frame.can_id = 0x123;  
-    frame.can_dlc = 1;    
-    frame.data[0] = 0;     
-
+    int currentValue = 0;
     while (true) {
-        frame.data[0] = (frame.data[0] == 0) ? 1 : 0;
+        currentValue = (currentValue == 0) ? 1 : 0;
+        std::cout << "Valor atual da porta: " << getDigitalInput() << std::endl;
 
-        if (write(socket_desc, &frame, sizeof(struct can_frame)) != sizeof(struct can_frame)) {
-            std::cerr << "Erro ao enviar a mensagem CAN" << std::endl;
-            return -1;
-        }
-
-        std::cout << "Mensagem enviada: " << (frame.data[0] ? "Ligar" : "Desligar") << std::endl;
-
+        setDigitalOutput(0, currentValue);
         sleep(1);
     }
 
-    close(socket_desc);
-
+    // Libera a porta paralela (não alcançado devido ao loop infinito)
+    ioctl(parport_fd, PPRELEASE);
+    close(parport_fd);
     return 0;
 }
