@@ -4,20 +4,27 @@
 #include <sys/ioctl.h>
 #include <linux/ppdev.h>
 #include <cstring>
+#include <pthread.h>
 
 // Desabilitamos a lógica CAN e utilizamos a porta paralela
 // Variável global para o descritor da porta paralela
 int parport_fd;
 
-// Define o estado de saída digital
+// Mutex para sincronizar o acesso aos buffers de saída
+pthread_mutex_t writeOutputsBufferLock = PTHREAD_MUTEX_INITIALIZER;
+
+// Vetores para habilitar módulos e armazenar os estados das saídas (16 módulos)
+unsigned char BC8S_enabled[16];
+int BC8S_outputBuffers[16];
+
 /*
 @func:      setDigitalOutput | Define estado de saída utilizando a porta paralela
-@param:     int moduleAddress | Endereço do módulo (não utilizado, apenas para compatibilidade)
+@param:     int moduleAddress | Endereço do módulo (nesse exemplo indica qual módulo está sendo acessado)
 @param:     int value | Valor da saída (cada bit pode representar um canal)
 @area:      Comunicação em porta paralela
 */
 void setDigitalOutput(int moduleAddress, int value) {
-    (void)moduleAddress; // Suprime warning de variável não utilizada
+    // Se desejar, você pode usar moduleAddress para modificar o valor transmitido
     if (ioctl(parport_fd, PPWDATA, &value) < 0) {
         std::cerr << "Erro ao enviar dados para /dev/parport0 em setDigitalOutput" << std::endl;
     } else {
@@ -49,16 +56,36 @@ int main() {
         return -1;
     }
 
-    int currentValue = 0;
-    while (true) {
-        currentValue = (currentValue == 0) ? 1 : 0;
-        std::cout << "Valor atual da porta: " << getDigitalInput() << std::endl;
+    // Inicializa os 16 módulos: todos habilitados e as saídas iniciadas com 0.
+    for (int i = 0; i < 16; i++) {
+        BC8S_enabled[i] = 1;       // Habilita o módulo
+        BC8S_outputBuffers[i] = 0; // Saída inicial
+    }
+    // Exemplo: define o estado do módulo BC8S 0 como 600
+    BC8S_outputBuffers[0] = 600;
 
-        setDigitalOutput(0, currentValue);
+    // Loop principal para atualizar as saídas digitais dos módulos
+    while (true) {
+        for (int BC8S_address = 0; BC8S_address < 16; BC8S_address++) {
+            unsigned char BC8SoutputEnabled;
+            int outputStates;
+
+            pthread_mutex_lock(&writeOutputsBufferLock);
+                BC8SoutputEnabled = BC8S_enabled[BC8S_address];
+                outputStates = BC8S_outputBuffers[BC8S_address];
+            pthread_mutex_unlock(&writeOutputsBufferLock);
+            
+            if (BC8SoutputEnabled) {
+                setDigitalOutput(BC8S_address, outputStates);
+            }
+        }
+
+        // Opcional: leitura do estado da porta (pode ser ajustado conforme necessário)
+        std::cout << "Valor atual da porta: " << getDigitalInput() << std::endl;
         sleep(1);
     }
 
-    // Libera a porta paralela (não alcançado devido ao loop infinito)
+    // Libera a porta paralela (nunca alcançado devido ao loop infinito)
     ioctl(parport_fd, PPRELEASE);
     close(parport_fd);
     return 0;
