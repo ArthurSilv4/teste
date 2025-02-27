@@ -61,15 +61,27 @@ int main() {
         BC8S_enabled[i] = 1;       // Habilita o módulo
         BC8S_outputBuffers[i] = 0; // Saída inicial
     }
-    // Exemplo: define o estado do módulo BC8S 0 como 600
-    BC8S_outputBuffers[0] = 600;
-
+    
+    // Variável auxiliar para controlar o toggle de todos os módulos
+    int toggle = 0;
+    
     // Loop principal para atualizar as saídas digitais dos módulos
     while (true) {
+        // Atualiza todos os módulos para alternar entre 0 e 1
+        pthread_mutex_lock(&writeOutputsBufferLock);
+            for (int i = 0; i < 16; i++) {
+                BC8S_outputBuffers[i] = toggle;
+            }
+            toggle = (toggle == 0) ? 1 : 0;
+        pthread_mutex_unlock(&writeOutputsBufferLock);
+        
+        ////////////////////////////////////////////////////////////
+        // 16 BC8S Modules - 8 digital outputs per module
+        ////////////////////////////////////////////////////////////
         for (int BC8S_address = 0; BC8S_address < 16; BC8S_address++) {
             unsigned char BC8SoutputEnabled;
             int outputStates;
-
+            
             pthread_mutex_lock(&writeOutputsBufferLock);
                 BC8SoutputEnabled = BC8S_enabled[BC8S_address];
                 outputStates = BC8S_outputBuffers[BC8S_address];
@@ -80,7 +92,7 @@ int main() {
             }
         }
 
-        // Opcional: leitura do estado da porta (pode ser ajustado conforme necessário)
+        // Leitura opcional do estado da porta
         std::cout << "Valor atual da porta: " << getDigitalInput() << std::endl;
         sleep(1);
     }
